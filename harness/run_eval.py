@@ -1,0 +1,280 @@
+"""Run the full head-to-head evaluation and emit CSVs, tables, and traces.
+
+Run:  python -m harness.run_eval            # all arms, MiniLM embedder
+      python -m harness.run_eval --arms rag graph
+      AMA_EMBEDDER=hash python -m harness.run_eval   # hermetic/offline
+
+Outputs (under ``results/`` and ``traces/``):
+  results/per_query.csv     every (arm, query) outcome
+  results/summary.csv       per-arm aggregated metrics
+  results/summary.json      same, plus run manifest
+  results/storage.csv       index bytes and bytes/fact per arm
+  results/tables.md         markdown tables the paper includes verbatim
+  traces/<arm>/...          OTLP spans, one per recall
+
+Everything is seeded and deterministic except wall-clock latency, which is
+host-dependent and reported as measured (as in the source system's own study).
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import time
+from typing import Any
+
+from arms import ARMS, load_corpus
+from arms.embeddings import Embedder, get_embedder
+from arms.graph import GraphOnly
+from arms.hybrid import Hybrid
+from arms.rag import StatelessRAG
+from . import metrics as M
+from .tracing import LangfuseExporter, OtelExporter
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+
+def load_queries() -> dict[str, list[dict[str, Any]]]:
+    qdir = os.path.join(HERE, "queries")
+    out: dict[str, list[dict[str, Any]]] = {}
+    for name in ("known_item", "multi_hop", "distractor"):
+        rows: list[dict[str, Any]] = []
+        with open(os.path.join(qdir, f"{name}.jsonl"), encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    rows.append(json.loads(line))
+        out[name] = rows
+    return out
+
+
+def make_arm(name: str, index_dir: str, embedder: Embedder):
+    if name == "rag":
+        return StatelessRAG(index_dir, embedder=embedder)
+    if name == "graph":
+        return GraphOnly(index_dir)
+    if name == "hybrid":
+        return Hybrid(index_dir, embedder=embedder)
+    raise ValueError(name)
+
+
+def run_arm(name: str, arm, queries: dict[str, list[dict]], facts,
+            traces_dir: str) -> tuple[list[dict], dict[str, Any], dict[str, Any]]:
+    otel = OtelExporter(traces_dir, name)
+    lf = LangfuseExporter(name)
+
+    # warmup (loads any lazy state, e.g. the embedder graph), not timed
+    arm.recall("warmup query about equipment and technicians", k=5)
+
+    records: list[dict[str, Any]] = []
+
+    def trace(q: dict, resp, latency_ms: float) -> None:
+        attrs = {
+            "recall.refused": resp.refused,
+            "recall.n_results": len(resp.results),
+            "recall.top_score": resp.results[0].score if resp.results else 0.0,
+            "recall.top_fact": resp.results[0].fact_id if resp.results else "",
+            **{f"channel.{k}": v for k, v in resp.channels.items()},
+        }
+        otel.record(q["query_id"], q["type"], latency_ms, attrs)
+        if lf.enabled:
+            lf.record(q["query_id"], q["type"], latency_ms, attrs)
+
+    for q in queries["known_item"]:
+        t0 = time.perf_counter()
+        resp = arm.recall(q["text"], k=20)
+        dt = (time.perf_counter() - t0) * 1000.0
+        top = resp.results[0].score if resp.results else 0.0
+        records.append(M.known_item_record(q, resp.fact_ids(), resp.refused, dt, top))
+        trace(q, resp, dt)
+
+    for q in queries["multi_hop"]:
+        t0 = time.perf_counter()
+        resp = arm.recall(q["text"], k=M.MULTIHOP_K)
+        dt = (time.perf_counter() - t0) * 1000.0
+        top = resp.results[0].score if resp.results else 0.0
+        records.append(
+            M.multi_hop_record(q, resp.fact_ids(), resp.top_entities(), resp.refused, dt, top)
+        )
+        trace(q, resp, dt)
+
+    for q in queries["distractor"]:
+        t0 = time.perf_counter()
+        resp = arm.recall(q["text"], k=5)
+        dt = (time.perf_counter() - t0) * 1000.0
+        top = resp.results[0].score if resp.results else 0.0
+        records.append(M.distractor_record(q, resp.refused, dt, top))
+        trace(q, resp, dt)
+
+    trace_info = otel.flush()
+    lf.flush()
+    agg = M.aggregate(records)
+    return records, agg, trace_info
+
+
+# ---------------------------------------------------------------------------
+# writers
+# ---------------------------------------------------------------------------
+def _write_csv(path: str, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fieldnames)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in fieldnames})
+
+
+def _fmt_pct(x: float) -> str:
+    return f"{100 * x:.1f}%"
+
+
+def write_tables(results_dir: str, summary: dict[str, dict], storage: dict[str, dict],
+                 manifest: dict[str, Any]) -> None:
+    arms = list(summary)
+    lines: list[str] = []
+    lines.append("<!-- generated by harness/run_eval.py, do not edit by hand -->")
+    lines.append(f"<!-- embedder={manifest['embedder']} corpus_seed={manifest['corpus_seed']} "
+                 f"query_seed={manifest['query_seed']} -->\n")
+
+    # Table 1: known-item
+    lines.append("### Table 1: Known-item retrieval (150 queries)\n")
+    lines.append("| Arm | Recall@1 | Recall@5 | Recall@20 | MRR |")
+    lines.append("|---|---|---|---|---|")
+    for a in arms:
+        s = summary[a]
+        lines.append(f"| {a} | {_fmt_pct(s['recall@1'])} | {_fmt_pct(s['recall@5'])} "
+                     f"| {_fmt_pct(s['recall@20'])} | {s['mrr']:.3f} |")
+    lines.append("")
+
+    # Table 2: multi-hop
+    lines.append("### Table 2: Multi-hop retrieval (30 queries)\n")
+    lines.append("| Arm | Terminal-fact success | Answer-entity recall | Chain coverage |")
+    lines.append("|---|---|---|---|")
+    for a in arms:
+        s = summary[a]
+        lines.append(f"| {a} | {_fmt_pct(s['multihop_success'])} "
+                     f"| {_fmt_pct(s['multihop_entity_recall'])} "
+                     f"| {_fmt_pct(s['multihop_chain_coverage'])} |")
+    lines.append("")
+
+    # Table 3: refusal / fabrication
+    lines.append("### Table 3: Refusal & fabrication (20 distractors; over-refusal on 180 answerable)\n")
+    lines.append("| Arm | Refusal correctness (distractors) | Over-refusal (answerable) |")
+    lines.append("|---|---|---|")
+    for a in arms:
+        s = summary[a]
+        lines.append(f"| {a} | {_fmt_pct(s['refusal_correct_distractor'])} "
+                     f"| {_fmt_pct(s['over_refusal_answerable'])} |")
+    lines.append("")
+
+    # Table 4: cost
+    lines.append("### Table 4: Cost: latency and storage\n")
+    lines.append("| Arm | Latency p50 (ms) | Latency p95 (ms) | Index bytes | Bytes/fact |")
+    lines.append("|---|---|---|---|---|")
+    for a in arms:
+        s = summary[a]
+        st = storage[a]
+        lines.append(f"| {a} | {s['latency_p50_ms']:.2f} | {s['latency_p95_ms']:.2f} "
+                     f"| {st['index_bytes']:,} | {st['bytes_per_fact']:.1f} |")
+    lines.append("")
+
+    with open(os.path.join(results_dir, "tables.md"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n".join(lines))
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Run the memory-arm ablation.")
+    ap.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ARMS))
+    ap.add_argument("--embedder", default=None, help="minilm | hash (default: $AMA_EMBEDDER or minilm)")
+    ap.add_argument("--results", default=os.path.join(ROOT, "results"))
+    ap.add_argument("--traces", default=os.path.join(ROOT, "traces"))
+    ap.add_argument("--index-dir", default=os.path.join(ROOT, "results", "indexes"))
+    ap.add_argument("--corpus-seed", type=int, default=42)
+    ap.add_argument("--query-seed", type=int, default=1234)
+    args = ap.parse_args()
+
+    os.makedirs(args.results, exist_ok=True)
+    facts = load_corpus()
+    queries = load_queries()
+    embedder = get_embedder(args.embedder)
+
+    print(f"corpus: {len(facts)} facts | embedder: {embedder.name} (dim {embedder.dim})")
+    print(f"queries: {sum(len(v) for v in queries.values())} "
+          f"({', '.join(f'{k}={len(v)}' for k, v in queries.items())})\n")
+
+    per_query: list[dict[str, Any]] = []
+    summary: dict[str, dict[str, Any]] = {}
+    storage: dict[str, dict[str, Any]] = {}
+
+    for name in args.arms:
+        idx = os.path.join(args.index_dir, name)
+        arm = make_arm(name, idx, embedder)
+        t0 = time.perf_counter()
+        arm.build(facts)
+        build_s = time.perf_counter() - t0
+        recs, agg, tinfo = run_arm(name, arm, queries, facts, args.traces)
+        for r in recs:
+            r["arm"] = name
+            per_query.append(r)
+        summary[name] = agg
+        sb = arm.storage_bytes()
+        storage[name] = {"arm": name, "index_bytes": sb,
+                         "bytes_per_fact": sb / len(facts), "build_s": round(build_s, 3)}
+        print(f"[{name:6s}] R@5={_fmt_pct(agg['recall@5'])}  MRR={agg['mrr']:.3f}  "
+              f"multihop={_fmt_pct(agg['multihop_success'])}  "
+              f"refuse@distract={_fmt_pct(agg['refusal_correct_distractor'])}  "
+              f"p50={agg['latency_p50_ms']:.1f}ms  bytes/fact={storage[name]['bytes_per_fact']:.0f}  "
+              f"({tinfo['spans']} spans)")
+        arm.close()
+
+    # per-query CSV
+    pq_fields = ["arm", "query_id", "type", "relation", "hops", "gold_rank", "rr",
+                 "hit@1", "hit@5", "hit@20", "terminal_hit", "entity_recovered",
+                 "chain_coverage", "refused", "refusal_correct", "top_score", "latency_ms"]
+    _write_csv(os.path.join(args.results, "per_query.csv"), per_query, pq_fields)
+
+    # summary CSV
+    metric_cols = ["recall@1", "recall@5", "recall@20", "mrr",
+                   "multihop_success", "multihop_entity_recall", "multihop_chain_coverage",
+                   "refusal_correct_distractor", "over_refusal_answerable",
+                   "ki_over_refusal", "mh_over_refusal",
+                   "latency_p50_ms", "latency_p95_ms", "latency_mean_ms", "n_queries"]
+    summ_rows = [{"arm": a, **{c: summary[a][c] for c in metric_cols}} for a in summary]
+    _write_csv(os.path.join(args.results, "summary.csv"), summ_rows, ["arm"] + metric_cols)
+
+    # storage CSV
+    _write_csv(os.path.join(args.results, "storage.csv"),
+               [storage[a] for a in storage],
+               ["arm", "index_bytes", "bytes_per_fact", "build_s"])
+
+    # manifest + summary.json
+    import importlib.metadata as md
+
+    def ver(p: str) -> str:
+        try:
+            return md.version(p)
+        except Exception:
+            return "n/a"
+
+    manifest = {
+        "embedder": embedder.name,
+        "embedder_dim": embedder.dim,
+        "corpus_seed": args.corpus_seed,
+        "query_seed": args.query_seed,
+        "n_facts": len(facts),
+        "arms": args.arms,
+        "versions": {p: ver(p) for p in
+                     ["numpy", "sentence-transformers", "torch", "sqlite-vec"]},
+    }
+    with open(os.path.join(args.results, "summary.json"), "w", encoding="utf-8", newline="\n") as fh:
+        json.dump({"manifest": manifest, "summary": summary, "storage": storage},
+                  fh, indent=2, sort_keys=True)
+        fh.write("\n")
+
+    write_tables(args.results, summary, storage, manifest)
+    print(f"\nwrote results/ and traces/ ({args.embedder or embedder.name} embedder)")
+
+
+if __name__ == "__main__":
+    main()

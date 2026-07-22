@@ -1,0 +1,63 @@
+{
+  "entities_by_type": {
+    "cert": 6,
+    "city": 10,
+    "client": 12,
+    "date": 55,
+    "equipment": 45,
+    "incident": 40,
+    "job": 150,
+    "person": 60,
+    "site": 20,
+    "team": 6,
+    "vendor": 10
+  },
+  "facts_by_category": {
+    "equipment": 180,
+    "incident": 200,
+    "job": 834,
+    "org": 297,
+    "site": 72
+  },
+  "facts_by_relation": {
+    "ASSIGNED_TO": 150,
+    "HAS_CERT": 119,
+    "HAS_MODEL": 45,
+    "HAS_SEVERITY": 40,
+    "HOMED_AT": 45,
+    "INVOLVES_EQUIPMENT": 40,
+    "INVOLVES_PERSON": 40,
+    "LOCATED_IN": 20,
+    "MAINTAINED_BY": 45,
+    "MANAGES": 6,
+    "MANUFACTURED_BY": 45,
+    "MEMBER_OF": 53,
+    "OCCURRED_AT": 40,
+    "OWNED_BY": 20,
+    "PERFORMED_AT": 150,
+    "REPORTED_ON": 40,
+    "REPORTS_TO": 59,
+    "SCHEDULED_ON": 150,
+    "SERVICES": 150,
+    "STATIONED_AT": 60,
+    "SUPPLIES": 32,
+    "USES": 234
+  },
+  "facts_sha256": "9ff7d959b098c4a0deb5c0d890a90e27cc426d36604831f5769fb2759fef8252",
+  "graph_sha256": "df5262f0e26131aa0d47678be5dfe755dcb04de197719489c4e53085074bd9a1",
+  "n_edges": 1498,
+  "n_entities": 414,
+  "n_facts": 1583,
+  "populations": {
+    "certs": 6,
+    "clients": 12,
+    "equipment": 45,
+    "incidents": 40,
+    "jobs": 150,
+    "people": 60,
+    "sites": 20,
+    "teams": 6,
+    "vendors": 10
+  },
+  "seed": 42
+}

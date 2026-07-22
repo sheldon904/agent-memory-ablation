@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Build artifacts that `make eval` regenerates. The corpus, query sets, and
+# committed reference results/traces are NOT ignored, they are the frozen
+# artifacts a stranger reproduces against. Only the throwaway per-run indexes
+# and the HF model cache are ignored.
+results/indexes/
+.cache/
+.hf_cache/
+*.db-wal
+*.db-shm
+
+# LaTeX build artifacts (paper/paper.pdf itself is fine to commit if you build it)
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.synctex.gz
+
+# OS
+.DS_Store
+Thumbs.db

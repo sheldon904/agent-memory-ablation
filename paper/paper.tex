@@ -1,0 +1,519 @@
+% Agent-Memory Ablation, paper #3, Sheldon Dynamics.
+% Build:  pdflatex paper.tex  (run from this directory; needs figures/*.png)
+% Or:     make pdf   (from the repo root; skips gracefully if no TeX toolchain)
+% Numbers are the exact contents of ../results/tables.md (make eval), except
+% latency (Table 4), which is a single host-dependent reference run.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{textcomp}
+\usepackage{caption}
+\usepackage[table]{xcolor}
+\usepackage{fancyhdr}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{figures/}}
+\captionsetup{font=small,labelfont=bf}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Agent-Memory Ablation}
+\fancyhead[R]{\small Sheldon Dynamics}
+\fancyfoot[C]{\small \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\newcommand{\arm}[1]{\texttt{#1}}
+
+\title{\vspace{-2em}\textbf{Ablating a Hybrid Agent-Memory Architecture:\\
+A Controlled Head-to-Head of Stateless RAG, a Canonical Knowledge Graph,\\
+and Their Hybrid on a Frozen Synthetic Corpus}}
+\author{William White\thanks{Correspondence: \texttt{sheldonwhite888@gmail.com}.
+Affiliation: Sheldon Dynamics.}\\
+\small Sheldon Dynamics}
+\date{July 2026}
+
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+
+\begin{abstract}
+\noindent A companion study characterized a five-channel hybrid memory substrate running
+in production~[2] and closed by naming its single most important untested claim: that the
+hybrid actually beats the baselines it subsumes, a comparison that report explicitly
+declined to run against itself (``no comparison against an external baseline \dots\ has
+been run,'' [2]~\S12; ``an external-baseline experiment (plain RAG over the same
+corpus),'' [2]~\S13). This study runs exactly that experiment, and turns it on its author.
+We build a frozen synthetic corpus of \textbf{1{,}583 operational facts} about a fictional
+field-services company, with a fully known ground-truth relation graph (414 entities,
+1{,}498 edges, a closed vocabulary of 22 relations over 11 entity types), and put
+\textbf{three memory architectures behind one typed \texttt{MemoryProvider} interface}:
+(a)~\textbf{stateless RAG} (chunked text, MiniLM embeddings in \texttt{sqlite-vec}, top-$k$
+only); (b)~\textbf{graph-only} (the canonical-graph, closed-vocabulary posture,
+forward-traversal recall, no vectors); and (c)~a \textbf{hybrid} that fuses facts $+$
+vectors $+$ graph with weighted Reciprocal Rank Fusion. All three run against three seeded,
+frozen query sets built before any arm was executed: \textbf{150 known-item},
+\textbf{30 multi-hop} (2-3 joins), and \textbf{20 distractor} queries (answer absent; the
+fabrication-pressure probe). Every recall is traced to an OpenTelemetry-shaped span
+exported into the repository. The results do not flatter the hybrid. On this clean,
+canonical corpus the \textbf{graph-only arm is the surprise strong performer}: it ties the
+field on known-item recall (Recall@5 98.7\%, Recall@20 100\%), wins multi-hop retrieval
+outright (53.3\% terminal-fact success vs.\ the hybrid's 40.0\% and RAG's 0.0\%), and, most
+consequentially, is the \textbf{only arm that does not fabricate}, refusing correctly on
+100\% of distractors against just 10\% for both RAG and the hybrid. The hybrid's entire
+measured advantage reduces to ranking precision (best MRR 0.800, best Recall@1 71.3\%), for
+which it pays the most latency ($\approx$9\,ms p50, ${\sim}30\times$ the graph arm's
+$\approx$0.3\,ms) and the most storage (2{,}528 bytes/fact, $25\times$ the graph arm's
+101), and inherits RAG's fabrication pressure wholesale. We state four hypotheses up front,
+report that two are refuted, inventory every failure, devote a section to \emph{where the
+hybrid loses}, and disclose the corpus properties that make this the graph's best case.
+Every number reproduces from \texttt{make eval} on the checked-in seeds.
+\end{abstract}
+
+\section{Introduction}
+The Sheldon Dynamics memory program has, to date, produced two \emph{characterization}
+studies, a fourteen-run evaluation of an operational decisioning substrate against a frozen
+holdout~[1], and a seventeen-day in-vivo instrumentation of a production hybrid memory
+substrate~[2]. Both study a \emph{single system}: they measure what a shipped architecture
+does, in careful detail, but neither pits that architecture against the alternatives it
+claims to improve on. [2] is explicit and repeated about this being its central limitation.
+Its threats-to-validity section lists, eighth and last, ``no comparison against an external
+baseline (hosted memory API or plain RAG over raw text) has been run,'' and its
+recommended-next-steps section ends with ``(5) an external-baseline experiment (plain RAG
+over the same corpus) using the E1 harness unchanged.''
+
+This report is that experiment, deliberately generalized from ``plain RAG vs.\ the hybrid''
+to a three-way ablation, and deliberately pointed back at the author's own design
+assumptions. The motivating question is narrow and falsifiable: \emph{when you strip a
+production hybrid memory down to its constituent postures, pure vectors, pure canonical
+graph, and run all three head-to-head on one frozen corpus with one frozen eval harness,
+does the hybrid actually earn its complexity, and where does it not?}
+
+The scientific value of the study is precisely that it can embarrass its author, and partly
+does. A hybrid that swept every metric would be a red flag: it would suggest a benchmark
+tuned to the conclusion. What follows instead is an ablation in which the simplest structured
+arm wins most axes on this corpus, the hybrid's advantage is real but narrow and expensive,
+and the corpus itself is disclosed as the graph's most favorable case. That combination, a
+genuine cost paid, honestly reported, is the point. Synthetic is a feature, not a
+concession: unlike a production store, a synthetic corpus with a generated ground-truth
+graph is shareable, re-runnable, and gives every query a machine-checkable answer, including
+the distractors whose correct answer is ``not in memory.''
+
+\section{Hypotheses}
+Stated before results, judged against them in \S11.
+\begin{itemize}
+  \item \textbf{H1: Vectors win known-item.} The vector-bearing arms (RAG, hybrid) will
+  lead known-item retrieval (Recall@5, MRR); the closed-vocabulary graph, lacking dense
+  semantics, will trail on lexically-paraphrased single-fact queries.
+  \item \textbf{H2: Structure wins multi-hop.} Graph and hybrid will beat RAG on
+  multi-hop retrieval by a wide margin, because joins require traversal that top-$k$ vector
+  recall cannot perform.
+  \item \textbf{H3: Refusal is ordered graph $>$ hybrid $>$ RAG.} Graph-only will refuse
+  most correctly on distractors (absence from a canonical graph is an unambiguous signal),
+  RAG will fabricate most, and the hybrid will land \emph{between} the two.
+  \item \textbf{H4: The hybrid does not dominate.} It will not win every metric; it will
+  pay measurable costs in latency, storage-per-fact, and at least one quality axis relative
+  to the specialized arms.
+\end{itemize}
+
+\section{The three arms}
+All three implement one typed interface, \texttt{MemoryProvider} (\texttt{arms/base.py}):
+\texttt{build(facts)} indexes the frozen corpus once; \texttt{recall(query, k)} returns a
+ranked list of facts plus a single boolean, \texttt{refused}, the arm's own decision that it
+has no confident answer. The harness derives every metric from that response and the
+wall-clock time of the call, so no arm sees ground truth or can special-case the evaluation.
+
+\paragraph{(a) Stateless RAG (\arm{rag}).} Each corpus fact is one retrieval chunk (the
+facts are sentence-sized). Facts are embedded with \texttt{all-MiniLM-L6-v2} (384-d, CPU,
+L2-normalized) and stored in a \texttt{sqlite-vec} (\texttt{vec0}) index; recall is
+exact-cosine top-$k$. There is no graph, no entity linking, no state between queries. A
+single cosine floor (0.40, matching the source system's semantic threshold~[2]) is both the
+relevance cutoff and the entire refusal rule: if the best match is below the floor, the arm
+reports ``not in memory.'' That one threshold is RAG's only defense against fabrication.
+
+\paragraph{(b) Graph-only (\arm{graph}).} The corpus's ground-truth relation graph is loaded
+into a forward (subject$\rightarrow$object) adjacency structure. A query is linked to seed
+entities by a shared, purely-lexical linker (id patterns like \texttt{WO-10047}, plus whole
+display-name matches on word boundaries); recall is a bounded forward breadth-first traversal
+that collects each reached node's \emph{outgoing} facts, ranked by hop distance then
+token-Jaccard overlap. No vectors. Forward-only traversal is deliberate: every relation
+points outward from an entity to its resources (a job to its equipment, a site to its owner),
+so it follows every reasoning chain while avoiding the reverse fan-in explosion through hub
+nodes, the same hub-suppression instinct [2] encodes, expressed here as edge directionality.
+The arm refuses exactly when the query links no entity.
+
+\paragraph{(c) Hybrid (\arm{hybrid}).} A ported slice of the five-channel design~[2], facts
+$+$ vectors $+$ graph, with three grounded channels: a BM25 lexical index over fact text, MiniLM cosine (shared embedder with RAG), and the graph traversal (shared engine with the
+graph arm). The three channel orderings are combined by \textbf{weighted Reciprocal Rank
+Fusion}~[3], with the graph channel up-weighted 2:1 because it is the precision-oriented
+channel and the only one that can reach a multi-hop answer. This is the parameter-free fusion
+[2]~\S13 named as its own top recommended improvement. The refusal rule is deliberately
+permissive, the hybrid refuses only when \emph{both} the vector top is below the floor
+\emph{and} the graph links no seed; the BM25 channel is a recall booster, never a grounding
+signal. \S8 reports the consequence.
+
+\subsection{Design constants}
+\begin{table}[h]\centering\small
+\begin{tabular}{lll}
+\toprule
+Group & Constant & Value \\
+\midrule
+Embedder & model / dim & all-MiniLM-L6-v2 / 384 \\
+Vector & store / search & \texttt{sqlite-vec vec0} / exact cosine \\
+Vector & cosine floor (relevance $+$ RAG refusal) & 0.40 \\
+Graph & traversal / max hops & forward BFS / 3 \\
+Graph & candidate rank key & (hop asc, Jaccard desc, id) \\
+Hybrid & fusion & weighted RRF, $k_0=60$ \\
+Hybrid & channel weights (vector : facts : graph) & 1 : 1 : 2 \\
+Hybrid & grounded-refusal rule & vector $<0.40$ \textbf{and} no graph seed \\
+Eval & known-item depth / cutoffs & 20 / \{1, 5, 20\} \\
+Eval & multi-hop judged at & top-10 \\
+Seeds & corpus / query & 42 / 1234 \\
+\bottomrule
+\end{tabular}
+\caption{Design constants. Fixed and committed; nothing is tuned per query or run.}
+\end{table}
+
+\section{The corpus}
+\texttt{corpus/generate.py} deterministically builds \textbf{Meridian Field Services}, a
+fictional industrial field-services company, from a single seeded RNG. Population sizes are
+fixed constants (seed-independent), so the corpus size is stable across machines; the seed
+controls only the random wiring and phrasing. Every fact is derived from exactly one graph
+edge or node attribute, so every fact has a known subject, relation, object, and set of
+linked entities.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{llp{7.6cm}}
+\toprule
+Layer & Count & Notes \\
+\midrule
+Facts & 1{,}583 & one NL statement per edge/attribute \\
+Entities & 414 & 60 people, 45 equipment, 20 sites, 12 clients, 10 vendors, 6 teams, 6 certs, 150 jobs, 40 incidents, $+$ city/date nodes \\
+Edges & 1{,}498 & directed, typed \\
+Relations & 22 & \textbf{closed} vocabulary (\texttt{REPORTS\_TO}, \texttt{USES}, \texttt{MAINTAINED\_BY}, \dots) \\
+Entity types & 11 & closed vocabulary \\
+\bottomrule
+\end{tabular}
+\caption{Substrate inventory of the frozen corpus (seed 42).}
+\end{table}
+
+Fact composition mirrors a real operational store: \textbf{jobs dominate row count}
+(834 facts, 53\%) the way email exhaust dominates the production store in~[2], while org,
+equipment, incident, and site facts make up the rest. This is deliberate, it lets
+known-item queries stratify across categories while the bulk sits in one operational
+category, reproducing the ``row count is not retrieval demand'' property~[2] observed in
+production. The generator writes \texttt{facts.jsonl}, \texttt{graph.json}, and a
+\texttt{manifest.json} carrying SHA-256 checksums of both; the committed corpus is verified
+against a fresh regeneration in the test suite.
+
+\section{The query sets}
+All three query sets are built by \texttt{harness/build\_queries.py} from the corpus and its
+ground-truth graph, \textbf{before any arm is run}, and committed with a seed and checksums.
+\begin{itemize}
+  \item \textbf{Known-item (150).} A natural question whose answer is one specific fact,
+  generated from functional relations across all five categories and phrased with paraphrase
+  (``Who is X's supervisor?'' for a \texttt{REPORTS\_TO} fact). Ground truth: the gold fact
+  id and its answer entity.
+  \item \textbf{Multi-hop (30).} A question whose answer requires joining 2-3 facts
+  (22 two-hop, 8 three-hop), from ten templates over forward chains (e.g.\ \emph{job
+  $\rightarrow$ USES $\rightarrow$ equipment $\rightarrow$ MAINTAINED\_BY $\rightarrow$
+  vendor}). Ground truth: the terminal fact that yields the answer entity, the full chain,
+  and the answer entity. Every chain is verified forward-reachable from a query-mentioned
+  seed.
+  \item \textbf{Distractor (20).} A well-formed question about an entity that is
+  \textbf{not} in the corpus. The correct behavior is refusal. The test suite asserts each
+  distractor links to zero real entities, a clean absence probe.
+\end{itemize}
+The distractors are the sharpest instrument: phrased identically to answerable known-item
+queries but naming an absent entity, they are lexically and semantically close to real
+facts. That is what makes them a fabrication-pressure test: a dense retriever will find
+\emph{something} similar and must decide whether to answer.
+
+\section{Method}
+Three instruments, all deterministic and seeded. (1)~\textbf{Retrieval replay}: each arm is
+built once over the 1{,}583-fact corpus, then answers all 200 queries; known-item scored at
+cutoffs \{1,5,20\} from a depth-20 recall, multi-hop at top-10, distractors on the
+\texttt{refused} flag. (2)~\textbf{Latency microbenchmark}: every \texttt{recall} call is
+wall-clock timed after a per-arm warmup; p50/p95 reported over all 200 queries and
+host-dependent, as in~[2]. (3)~\textbf{Tracing}: every recall is emitted as an
+OpenTelemetry-shaped span and exported to \texttt{traces/<arm>/} as OTLP JSON, shipping a
+standard-tooling artifact and closing the ``own-telemetry-only'' gap~[2] flagged, as a side
+effect. The headline numbers use \texttt{all-MiniLM-L6-v2} on CPU (deterministic to float32
+given the pinned version); a dependency-free hashing embedder (\texttt{AMA\_EMBEDDER=hash})
+lets the harness run fully offline, and because all three arms share whichever embedder is
+selected, the architectural comparison is valid under either.
+
+\section{Results}
+All numbers are produced by \texttt{make eval} with the MiniLM embedder and are the exact
+contents of \texttt{results/tables.md} (auto-generated; not hand-edited).
+
+\subsection{Known-item retrieval}
+\begin{table}[h]\centering\small
+\begin{tabular}{lcccc}
+\toprule
+Arm & Recall@1 & Recall@5 & Recall@20 & MRR \\
+\midrule
+\arm{rag} & 55.3\% & 68.7\% & 75.3\% & 0.610 \\
+\arm{graph} & 62.0\% & \textbf{98.7\%} & \textbf{100.0\%} & 0.750 \\
+\arm{hybrid} & \textbf{71.3\%} & 98.0\% & \textbf{100.0\%} & \textbf{0.800} \\
+\bottomrule
+\end{tabular}
+\caption{Known-item retrieval (150 queries).}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=0.72\linewidth]{\detokenize{fig1_known_item.png}}
+\caption{Known-item retrieval. The channels err on different queries.}
+\end{figure}
+
+The first surprise is at the top of the table: \textbf{pure RAG is the weakest known-item
+arm}, and by a wide margin at depth (Recall@20 of 75.3\% means one gold fact in four never
+surfaces in the top 20). The cause is directional confusion in a duplicate-rich store: a
+query like ``Who is Dana Reyes's supervisor?'' is embedded close to every ``\emph{X} reports
+to Dana Reyes'' fact where Dana is the \emph{object}, and those crowd out the single fact
+where she is the subject. The graph arm has no such problem, it links the subject and
+returns that subject's small set of outgoing facts (Recall@20 $=100$\%). The hybrid wins
+ranking precision (Recall@1 71.3\%, MRR 0.800). \textbf{H1 is refuted:} on an entity-anchored
+corpus, structure beats pure semantics even for single-fact retrieval.
+
+\subsection{Multi-hop retrieval}
+\begin{table}[h]\centering\small
+\begin{tabular}{lccc}
+\toprule
+Arm & Terminal-fact success (top-10) & Answer-entity recall & Chain coverage \\
+\midrule
+\arm{rag} & 0.0\% & 3.3\% & 5.0\% \\
+\arm{graph} & \textbf{53.3\%} & \textbf{53.3\%} & \textbf{81.1\%} \\
+\arm{hybrid} & 40.0\% & 40.0\% & 74.4\% \\
+\bottomrule
+\end{tabular}
+\caption{Multi-hop retrieval (30 queries).}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=0.72\linewidth]{\detokenize{fig2_multihop.png}}
+\caption{Multi-hop retrieval. Graph recalls the chain; the terminal ranks are the gap.}
+\end{figure}
+
+\textbf{H2 is confirmed, sharply.} RAG cannot join: it retrieves facts surface-similar to the
+question, which name the anchor entity but never the terminal answer, so it succeeds on zero
+of thirty. Graph and hybrid traverse. The nuance is the gap between \emph{chain coverage} and
+\emph{terminal success}: the graph arm surfaces 81\% of all chain facts but floats the
+specific terminal fact into the top 10 only 53\% of the time, it recalls the reasoning chain
+(the hard part) but a lexical ranker does not prioritize the answer within it. The hybrid
+trails the graph on all three measures despite containing the graph channel; \S8 explains why.
+
+\subsection{Refusal and fabrication}
+\begin{table}[h]\centering\small
+\begin{tabular}{lcc}
+\toprule
+Arm & Refusal correctness (20 distractors) & Over-refusal (180 answerable) \\
+\midrule
+\arm{rag} & 10.0\% & 0.0\% \\
+\arm{graph} & \textbf{100.0\%} & 0.0\% \\
+\arm{hybrid} & 10.0\% & 0.0\% \\
+\bottomrule
+\end{tabular}
+\caption{Refusal \& fabrication.}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=0.6\linewidth]{\detokenize{fig3_refusal.png}}
+\caption{Fabrication pressure: refusal on 20 distractors (higher $=$ less fabrication).}
+\end{figure}
+
+This is the study's most consequential table. The graph arm \textbf{never fabricates}: an
+absent entity links nothing, so it refuses correctly on all 20 distractors while never
+over-refusing any of the 180 answerable queries. RAG fabricates on 90\% of distractors, because they are phrased like real queries, the nearest fact clears the 0.40 cosine floor and
+the arm answers with confident nonsense. And the hybrid, despite carrying the graph channel
+that would have refused, \textbf{fabricates exactly as often as RAG.} \textbf{H3 is refuted:}
+the hybrid is not intermediate; it is pinned to RAG's fabrication rate.
+
+\subsection{Cost: latency and storage}
+\begin{table}[h]\centering\small
+\begin{tabular}{lcccc}
+\toprule
+Arm & Latency p50 (ms) & Latency p95 (ms) & Index bytes & Bytes/fact \\
+\midrule
+\arm{rag} & 7.68 & 10.07 & 3{,}244{,}032 & 2{,}049 \\
+\arm{graph} & \textbf{0.30} & \textbf{0.52} & \textbf{159{,}744} & \textbf{101} \\
+\arm{hybrid} & 8.98 & 11.22 & 4{,}001{,}792 & 2{,}528 \\
+\bottomrule
+\end{tabular}
+\caption{Cost. Latency is the one host- and run-dependent row (a single reference run); index
+bytes and every retrieval metric are exact and stable.}
+\end{table}
+
+\begin{figure}[h]\centering
+\includegraphics[width=0.95\linewidth]{\detokenize{fig4_cost.png}}
+\caption{Ranking quality (MRR) versus the two costs, latency and storage.}
+\end{figure}
+
+The graph arm is \textbf{${\sim}30\times$ faster} at the median than the hybrid
+($\approx$0.30\,ms vs.\ $\approx$9\,ms) and uses \textbf{$25\times$ less storage per fact}
+(101 vs.\ 2{,}528 bytes), because it holds no embeddings and touches no embedder on the hot
+path. The two vector arms are dominated by the ${\sim}8$\,ms MiniLM query embedding; the
+hybrid adds BM25 and graph work on top. \textbf{H4 is confirmed.}
+
+\section{Where the hybrid loses}
+A hybrid that won everything would be a benchmark artifact. This one loses three ways, two of
+them by inheriting the failure modes of the channels it fuses, and the honest accounting is
+that its \emph{only} wins on this corpus are ranking-precision (Recall@1, MRR).
+
+\paragraph{1. It re-inherits RAG's fabrication (the expensive loss).} The hybrid contains the
+very channel, graph linking, whose absence signal drives the graph arm to a perfect 100\%
+on distractors. It still fabricates at RAG's rate (10\%) because its grounding rule is a
+permissive OR: it answers if \emph{either} the vector channel clears the floor \emph{or} the
+graph links a seed. On a distractor the graph correctly abstains, but the vector channel
+clears the floor and the OR lets it speak. This is the general hazard of naive multi-channel
+grounding: \textbf{union-of-evidence maximizes recall and minimizes refusal}, and refusal is
+where fabrication lives. A graph-\emph{veto} rule would recover the 100\%, at the cost of
+over-refusing vector-answerable queries the graph cannot link. That trade is real and
+unmeasured here; it is the single highest-leverage follow-up (\S12).
+
+\paragraph{2. Fusion dilutes the graph channel on multi-hop (the subtle loss).} The hybrid
+trails graph-only on every multi-hop measure (40.0\% vs.\ 53.3\% terminal success) \emph{even
+with the graph channel up-weighted 2:1}. Reciprocal Rank Fusion rewards cross-channel
+agreement, but a multi-hop terminal fact is found by exactly one channel, the graph, while
+the two high-recall channels agree on shallower, surface-similar facts and outvote it.
+Weighting the graph channel higher narrows the gap (unweighted RRF scored 13.3\%; the 2:1
+weight lifts it to 40.0\%) but does not close it. Fusion, the mechanism that buys the hybrid
+its known-item ranking win, is the same mechanism that costs it multi-hop recall.
+
+\paragraph{3. It is the most expensive arm on every cost axis (the unavoidable loss).} Three
+materialized indices (vectors $+$ BM25 $+$ graph) make it the largest store at 2{,}528
+bytes/fact, and three channels plus a query embedding make it the slowest at $\approx$9\,ms
+p50. It is strictly Pareto-dominated by the graph arm on latency, storage, multi-hop, and
+refusal simultaneously; it beats the graph arm only on MRR (0.800 vs.\ 0.750) and Recall@1
+(71.3\% vs.\ 62.0\%). The honest one-line valuation: \textbf{it buys ${\sim}9$ points of
+Recall@1 and 0.05 of MRR for ${\sim}30\times$ the latency, $25\times$ the storage, and a
+90-point refusal regression.} What rescues the hybrid is not visible in this corpus at all
+(\S10), and naming that is the price of credibility.
+
+\section{Failure inventory}
+\begin{itemize}
+  \item \textbf{RAG, directional confusion (known-item).} 24.7\% of gold facts never reach
+  RAG's top-20; the dominant mode is subject/object inversion in symmetric-looking relations.
+  \item \textbf{RAG, no-join (multi-hop).} 30/30 terminal misses (5.0\% chain coverage); no
+  mechanism to follow an edge.
+  \item \textbf{RAG \& hybrid, confident fabrication (distractor).} 18/20 distractors
+  answered; the nearest real fact clears the 0.40 floor and neither arm has a structural
+  absence signal to override it.
+  \item \textbf{Graph, terminal-rank burial (multi-hop).} 14/30 terminal misses despite 81\%
+  chain coverage; hop-ascending order front-loads the anchor's shallow facts and Jaccard
+  cannot distinguish the paraphrased terminal. All 8 three-hop queries fail this way.
+  \item \textbf{Graph, paraphrase ranking (known-item MRR).} MRR 0.750 trails the hybrid's
+  0.800 when the query shares no salient token with the gold fact.
+  \item \textbf{Hybrid, fusion dilution.} See \S8.2.
+\end{itemize}
+
+\section{Threats to validity}
+\begin{enumerate}
+  \item \textbf{The corpus is the graph's best case, and we say so first.} Meridian is
+  synthetic, fully canonical (one clean id per entity, a closed relation vocabulary, zero
+  extraction noise), and its queries are entity-anchored. That is precisely the regime in
+  which entity linking and traversal dominate and dense semantics are least needed. Real
+  operational memory, the production setting~[2] the hybrid was built for, is the opposite:
+  noisy distilled text, no clean ids in the user's phrasing, heavy paraphrase and
+  coreference. The single most likely way these results \emph{fail to generalize} is that
+  they understate the vector and hybrid arms in exactly the conditions those arms exist to
+  handle.
+  \item \textbf{Known-item queries name the anchor entity,} handing the graph and hybrid arms
+  a free, reliable seed, the primary driver of their known-item lead.
+  \item \textbf{Multi-hop success is a strict top-10 terminal-fact bar,} undercounting the
+  graph arm's 81\% chain coverage.
+  \item \textbf{Single embedder, single host.} A stronger embedder would lift the vector arms
+  uniformly; latency is from one 2-vCPU-class host.
+  \item \textbf{The refusal thresholds are pre-committed, not optimal.} RAG's 0.40 floor is
+  inherited from~[2], not tuned on this corpus; we fixed it in advance to avoid post-hoc
+  curve-fitting.
+  \item \textbf{The hybrid is one point in a design space.} Weighted RRF with a 2:1 graph
+  weight and OR-grounding is a reasonable, minimal hybrid, not the optimal one; \S8 names two
+  variants that would move its numbers.
+  \item \textbf{No LLM in the loop.} These are retrieval metrics, not end-task answer-accuracy
+  metrics.
+\end{enumerate}
+
+\section{Discussion}
+\textbf{The hypotheses, revisited.} H2 and H4 are confirmed. H1 and H3 are \textbf{refuted}:
+pure RAG was the \emph{worst} known-item arm on an entity-anchored corpus, and the hybrid did
+not sit between graph and RAG on refusal, it was pinned to RAG's fabrication rate. Refuting
+one's own hypotheses is the intended outcome of a real ablation.
+
+\textbf{The substrate thesis, ablated.} [2] argued that recall quality is governed by store
+structure, not model choice. This study sharpens it: on a clean corpus, \emph{structure
+alone} (the graph arm, no model on the hot path) is competitive-to-dominant, and the dense
+channel's marginal contribution is ranking precision plus the coverage the graph lacks when
+queries are not entity-anchored, which this corpus, by construction, does not test. The
+production hybrid's justification therefore lives in the gap between this corpus and real
+operational text, and this study locates that gap rather than papering over it.
+
+\textbf{What the fabrication result means for hybrids generally.} The most transferable
+finding is architectural: \textbf{fusing a high-precision abstaining channel with a
+high-recall answering channel under union-of-evidence grounding throws away the abstention.}
+The graph arm's zero-fabrication property is a design asset a naive hybrid destroys. Any
+hybrid that wants both recall and calibrated refusal must make refusal a \emph{veto} of the
+grounded channel, not a \emph{vote}.
+
+\section{Recommended next steps}
+In order of leverage: (1)~\textbf{graph-veto refusal} in the hybrid, measuring recovered
+distractor refusal against induced over-refusal; (2)~\textbf{rank-aware fusion} that
+preserves a lone deep-hop graph hit; (3)~a \textbf{paraphrase / descriptive-reference query
+set} that does not name the anchor entity, the single most important generalization test;
+(4)~a \textbf{noisy corpus variant} (extraction noise, alias drift, coreference) moving
+Meridian toward production conditions; (5)~an \textbf{LLM answer-accuracy layer} that converts
+retrieval metrics into task metrics.
+
+\section{Conclusion}
+Three memory architectures, one frozen 1{,}583-fact corpus, 200 seeded queries, one eval
+harness: on this clean, canonical corpus the \textbf{graph-only arm wins or ties most
+axes}, Recall@20 100\%, multi-hop 53.3\%, refusal 100\%, at $\approx$0.3\,ms and 101
+bytes/fact, while the \textbf{hybrid's measured advantage reduces to ranking precision}
+(Recall@1 71.3\%, MRR 0.800), bought at ${\sim}30\times$ the latency, $25\times$ the storage,
+and a 90-point refusal regression it inherits wholesale from its dense channel. Two of four
+pre-registered hypotheses are refuted. The corpus is disclosed as the graph's most favorable
+case, which is exactly where the honest boundary of the claim lies: this study does not show
+that hybrids are unnecessary; it shows that on canonical, entity-anchored memory the
+specialized graph is hard to beat and cheap to run, that a naive hybrid throws away the
+graph's zero-fabrication property, and that the production hybrid's real justification lives
+in the messier corpus this study deliberately did not build, and names as the next one to.
+
+\paragraph{Practitioner one-liner.} On a clean, canonical operational corpus, a vector-free
+knowledge graph beats plain RAG and ties or beats a fused hybrid on almost everything that
+matters, recall, multi-hop, and especially refusal (100\% vs.\ 10\%), at ${\sim}1/25$th the
+storage and ${\sim}1/30$th the latency; the hybrid's extra machinery buys ranking precision
+and, unless refusal is a veto rather than a vote, silently reinherits RAG's fabrication.
+
+\paragraph{Reproducibility.} A stranger reproduces every number with
+\texttt{pip install -r requirements.txt} then \texttt{make eval} (or
+\texttt{python -m harness.run\_eval}), which regenerates the frozen corpus and query sets
+(verifying committed checksums), builds all three arms, runs the 200 queries, and writes
+\texttt{results/*.csv}, \texttt{results/tables.md} (the source of Tables 1-4),
+\texttt{results/summary.json}, \texttt{traces/<arm>/} (OTLP spans), and the figures. All
+retrieval metrics are deterministic given the pinned \texttt{all-MiniLM-L6-v2}; only latency
+(Table 4) is host-dependent. \texttt{AMA\_EMBEDDER=hash} runs the whole study offline with no
+model download. A 25-test suite (\texttt{make test}) fails if the committed artifacts drift
+from their seeds.
+
+\begin{thebibliography}{9}
+\small
+\bibitem{lb} W. White. \emph{Augmented Operational Decisioning with Ontology-Grounded Local
+Agents: A Fourteen-Run Empirical Study Against Real Construction-Operations Data.} Little Bear Foundry Research, May 2026.
+\bibitem{hermes} W. White. \emph{Hybrid Holographic Memory in a Production Personal Agent: A
+Seventeen-Day Empirical Characterization of Compounding, Ontology-Gated Recall on Live
+Operational Data.} Sheldon Dynamics, July 2026.
+\bibitem{rrf} G. V. Cormack, C. L. A. Clarke, S. B\"uttcher. \emph{Reciprocal Rank Fusion
+Outperforms Condorcet and Individual Rank Learning Methods.} SIGIR 2009.
+\bibitem{sbert} N. Reimers, I. Gurevych. \emph{Sentence-BERT: Sentence Embeddings using
+Siamese BERT-Networks.} EMNLP 2019.
+\bibitem{sqlitevec} A. Garcia. \emph{sqlite-vec.} \url{https://github.com/asg017/sqlite-vec}, 2024.
+\bibitem{hofstadter} D. Hofstadter. \emph{Analogy as the Core of Cognition.} In \emph{The
+Analogical Mind}, MIT Press, 2001.
+\bibitem{plate} T. Plate. \emph{Holographic Reduced Representations.} IEEE Transactions on
+Neural Networks, 6(3), 1995.
+\end{thebibliography}
+
+\end{document}

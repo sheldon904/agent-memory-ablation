@@ -1,0 +1,17 @@
+{
+  "counts": {
+    "distractor": 20,
+    "known_item": 150,
+    "multi_hop": 30
+  },
+  "multi_hop_by_hops": {
+    "2": 22,
+    "3": 8
+  },
+  "seed": 1234,
+  "sha256": {
+    "distractor": "42d00ec3ddf32f27a9c389d07f0f70a368d5748106675ec627f753f6e6c5a314",
+    "known_item": "38836885e48c6c0230f3360b92df6f562cd3b8075a7661904bcaccbaa0e65637",
+    "multi_hop": "c9751a88506e67ca8b62dcc8729c5dd3dd474bc5dd824245a8ddbeecc139a186"
+  }
+}

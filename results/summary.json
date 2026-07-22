@@ -1,0 +1,93 @@
+{
+  "manifest": {
+    "arms": [
+      "rag",
+      "graph",
+      "hybrid"
+    ],
+    "corpus_seed": 42,
+    "embedder": "minilm",
+    "embedder_dim": 384,
+    "n_facts": 1583,
+    "query_seed": 1234,
+    "versions": {
+      "numpy": "1.26.4",
+      "sentence-transformers": "5.6.0",
+      "sqlite-vec": "0.1.9",
+      "torch": "2.5.1"
+    }
+  },
+  "storage": {
+    "graph": {
+      "arm": "graph",
+      "build_s": 0.029,
+      "bytes_per_fact": 100.91219204042956,
+      "index_bytes": 159744
+    },
+    "hybrid": {
+      "arm": "hybrid",
+      "build_s": 2.956,
+      "bytes_per_fact": 2527.979785217941,
+      "index_bytes": 4001792
+    },
+    "rag": {
+      "arm": "rag",
+      "build_s": 3.311,
+      "bytes_per_fact": 2049.2937460518006,
+      "index_bytes": 3244032
+    }
+  },
+  "summary": {
+    "graph": {
+      "ki_over_refusal": 0.0,
+      "latency_mean_ms": 0.3219784998509567,
+      "latency_p50_ms": 0.29799999902024865,
+      "latency_p95_ms": 0.5203000036999583,
+      "mh_over_refusal": 0.0,
+      "mrr": 0.7495555555555555,
+      "multihop_chain_coverage": 0.8111111111111111,
+      "multihop_entity_recall": 0.5333333333333333,
+      "multihop_success": 0.5333333333333333,
+      "n_queries": 200,
+      "over_refusal_answerable": 0.0,
+      "recall@1": 0.62,
+      "recall@20": 1.0,
+      "recall@5": 0.9866666666666667,
+      "refusal_correct_distractor": 1.0
+    },
+    "hybrid": {
+      "ki_over_refusal": 0.0,
+      "latency_mean_ms": 9.20244350007124,
+      "latency_p50_ms": 8.97899999836227,
+      "latency_p95_ms": 11.220799999136943,
+      "mh_over_refusal": 0.0,
+      "mrr": 0.8001111111111113,
+      "multihop_chain_coverage": 0.7444444444444446,
+      "multihop_entity_recall": 0.4,
+      "multihop_success": 0.4,
+      "n_queries": 200,
+      "over_refusal_answerable": 0.0,
+      "recall@1": 0.7133333333333334,
+      "recall@20": 1.0,
+      "recall@5": 0.98,
+      "refusal_correct_distractor": 0.1
+    },
+    "rag": {
+      "ki_over_refusal": 0.0,
+      "latency_mean_ms": 7.967130499891937,
+      "latency_p50_ms": 7.677100002183579,
+      "latency_p95_ms": 10.071300006529782,
+      "mh_over_refusal": 0.0,
+      "mrr": 0.6102904317904319,
+      "multihop_chain_coverage": 0.05,
+      "multihop_entity_recall": 0.03333333333333333,
+      "multihop_success": 0.0,
+      "n_queries": 200,
+      "over_refusal_answerable": 0.0,
+      "recall@1": 0.5533333333333333,
+      "recall@20": 0.7533333333333333,
+      "recall@5": 0.6866666666666666,
+      "refusal_correct_distractor": 0.1
+    }
+  }
+}

@@ -1,0 +1,23 @@
+# agent-memory-ablation, pinned for deterministic, reproducible runs.
+# Verified on Python 3.11, CPU. See paper/README.md §Reproducibility.
+#
+# numpy is pinned BELOW 2.0 on purpose: the pre-2.0 ABI is what torch 2.5.x,
+# pandas 2.1.x, and scikit-learn wheels in this stack were built against.
+# Upgrading numpy silently breaks pandas with a dtype-size ABI error.
+numpy==1.26.4
+
+# Embeddings: the paper's model, all-MiniLM-L6-v2 (384-d), run on CPU.
+sentence-transformers==5.6.0
+torch==2.5.1
+
+# Embedded vector index (the spec-named store for the RAG arm).
+sqlite-vec==0.1.9
+
+# Figures for the paper.
+matplotlib==3.10.6
+
+# Render the paper PDF without a TeX toolchain (make pdf).
+reportlab==4.0.4
+
+# Tests.
+pytest==8.4.2

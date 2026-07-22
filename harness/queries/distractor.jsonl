@@ -1,0 +1,20 @@
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-001", "should_refuse": true, "text": "Who is Casey Ivers's supervisor?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-002", "should_refuse": true, "text": "Which crew does Skylar Denholm belong to?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-003", "should_refuse": true, "text": "Where is Rowan Ivers stationed?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-004", "should_refuse": true, "text": "Which vendor maintains excavator EX-893?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-005", "should_refuse": true, "text": "Who manufactured generator GN-766?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-006", "should_refuse": true, "text": "Which technician is assigned to work order WO-95137?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-007", "should_refuse": true, "text": "On what date is work order WO-91683 scheduled?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-008", "should_refuse": true, "text": "Where did incident INC-924 occur?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-009", "should_refuse": true, "text": "Which client owns SITE-806?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-010", "should_refuse": true, "text": "What severity level was incident INC-975 logged at?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-011", "should_refuse": true, "text": "Who is Riley Ivers's supervisor?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-012", "should_refuse": true, "text": "Which crew does Sage Falkner belong to?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-013", "should_refuse": true, "text": "Where is Sage Carrow stationed?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-014", "should_refuse": true, "text": "Which vendor maintains excavator EX-722?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-015", "should_refuse": true, "text": "Who manufactured generator GN-723?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-016", "should_refuse": true, "text": "Which technician is assigned to work order WO-91779?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-017", "should_refuse": true, "text": "On what date is work order WO-92018 scheduled?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-018", "should_refuse": true, "text": "Where did incident INC-845 occur?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-019", "should_refuse": true, "text": "Which client owns SITE-888?", "type": "distractor"}
+{"answer_entities": [], "answer_fact_ids": [], "chain_fact_ids": [], "hops": 0, "query_id": "DX-020", "should_refuse": true, "text": "What severity level was incident INC-856 logged at?", "type": "distractor"}

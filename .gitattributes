@@ -1,0 +1,8 @@
+# Reproducibility: store and check out text as LF everywhere, so the frozen
+# corpus/query artifacts and their committed SHA-256 checksums are stable across
+# platforms (the generators write LF and hash LF).
+* text=auto eol=lf
+
+# Binary assets, never apply line-ending conversion (would corrupt them).
+*.pdf binary
+*.png binary
