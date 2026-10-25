@@ -20,7 +20,7 @@ matplotlib==3.10.6
 reportlab==4.0.4
 
 # Tests.
-pytest==8.4.2
+pytest==9.1.1
 
 # Security pins for transitive dependencies (2026-10-24 CVE sweep).
 # pillow 13 needs Python 3.11+, so pyproject.toml now requires 3.11 as well.
@@ -29,3 +29,4 @@ httpx2==2.16.0
 httpcore2==2.16.0
 transformers==5.20.2
 pillow==13.0.0
+pygments==2.21.0
