@@ -8,7 +8,7 @@ numpy==1.26.4
 
 # Embeddings: the paper's model, all-MiniLM-L6-v2 (384-d), run on CPU.
 sentence-transformers==5.6.0
-torch==2.5.1
+torch==2.6.0
 
 # Embedded vector index (the spec-named store for the RAG arm).
 sqlite-vec==0.1.9
