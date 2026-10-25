@@ -7,7 +7,7 @@ name = "agent-memory-ablation"
 version = "1.0.0"
 description = "A controlled ablation of stateless RAG, a canonical knowledge graph, and their hybrid on a frozen synthetic corpus."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "William White", email = "sheldonwhite888@gmail.com" }]
 
